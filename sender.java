@@ -62,8 +62,13 @@ public class sender{
     while(!done){
       // transmit
       char[] buf = new char[500];
-      if(br.read(buf, 0, 500)<500)
+      int read = br.read(buf, 0, 500);
+      if(read < 500){
         done = true;
+        char[] tmp = new char[read];
+        System.arraycopy(buf, 0, tmp, 0, read);
+        buf = tmp;
+      }
       packet p = packet.createPacket(i, new String(buf));
       curPacket = p;
 
@@ -100,11 +105,16 @@ public class sender{
       packet ack = packet.parseUDPdata(receivePacket.getData());
       if(ack.getType() == 0){
         System.out.println("Got ack: " + ack.getSeqNum());
-        packet p = packets.peek();
-        while(p!= null && p.getSeqNum() != ack.getSeqNum()){
-          synchronized(packets){
-            packets.removeFirst();
-            p = packets.peek();
+        synchronized(packets){
+          packet ackedP = null;
+          for(packet p: packets){
+            if(ack.getSeqNum() == p.getSeqNum())
+              ackedP = p;
+          }
+          if(ackedP != null){
+            packet p = packets.removeFirst();
+            while(p != ackedP)
+              p = packets.removeFirst();
           }
         }
 
@@ -120,6 +130,8 @@ public class sender{
         }
       }
     }
+
+    System.out.println("listener done");
 
   }
 
@@ -183,21 +195,25 @@ public class sender{
 
     transmit();
 
+
+    while(!packets.isEmpty()){
+      System.out.println(packets);
+      Thread.sleep(500);
+    }
+
+    timer.cancel();
+    scheduled = false;
+
     // send EOT
-    byte[] sendData = packet.createEOT(i).getUDPdata();
+    byte[] sendData = packet.createEOT(10).getUDPdata();
     DatagramPacket sendPacket = new DatagramPacket(sendData, sendData.length,
         host, emuPort);
     sendSocket.send(sendPacket);
 
-    while(!packets.isEmpty()){
-      Thread.sleep(500);
-    }
-
-    task.cancel();
-    scheduled = false;
     br.close();
     sendSocket.close();
     receiveSocket.close();
+    System.out.println("done:");
   }
 
   public static void main(String[] args){

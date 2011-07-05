@@ -1,1 +1,1 @@
-java receiver localhost 9993 9994 out.txt
+java receiver localhost 4443 4444 out.txt

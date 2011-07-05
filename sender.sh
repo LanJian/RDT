@@ -1,1 +1,1 @@
-java sender localhost 9991 9992 alice.txt
+java sender localhost 4441 4442 alice.txt
