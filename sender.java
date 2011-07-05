@@ -1,6 +1,6 @@
 import java.io.*;
 import java.net.*;
-import java.util.Timer;
+import java.util.*;
 
 public class sender{
   InetAddress host;
@@ -9,9 +9,11 @@ public class sender{
   DatagramSocket sendSocket;
   DatagramSocket receiveSocket;
   Timer timer;
+  TimerTask task;
+  boolean scheduled;
 
   int windowSize;
-  List<packet> packets;
+  LinkedList<packet> packets;
   packet curPacket;
   int i;
   boolean done;
@@ -24,18 +26,32 @@ public class sender{
       br = new BufferedReader(new FileReader(f));
       sendSocket = new DatagramSocket();
       receiveSocket = new DatagramSocket(ackPort);
-      timer = new Timer();
 
       windowSize = 10;
       packets = new LinkedList<packet>();
       curPacket = null;
       i = 0;
       done = false;
+
+      timer = new Timer();
+      task = new TimerTask(){
+        public void run(){
+          try{
+            timerExpired();
+          }catch(Exception e){
+            System.err.println("An error occured - create task");
+            e.printStackTrace();
+            System.exit(1);
+          }
+        }
+      };
+      scheduled = false;
     } catch (UnknownHostException e) {
       System.err.println("Don't know about host: " + h);
       System.exit(1);
     } catch(Exception e){
       //help text
+      e.printStackTrace();
       System.exit(1);
     }
 
@@ -53,24 +69,31 @@ public class sender{
 
       boolean sent = false;
       while(!sent) {
-        if (packets.length() < windowSize){
+        if (packets.size() < windowSize){
           sendPackets(false);
           sent = true;
         } else {
-          System.sleep(500);
+          Thread.sleep(500);
         }
       }
 
-      packets.add(p);
+      synchronized(packets){
+        packets.add(p);
+      }
       //TODO start timer if not already started
+      if(!scheduled){
+        createTask();
+        timer.schedule(task, 100);
+      }
       i++;
       i%=32;
+    }
   }
 
   private void listen() throws Exception{
     byte[] receiveData = new byte[512];
 
-    while(!done){
+    while(!done || !packets.isEmpty()){
       // get ack
       DatagramPacket receivePacket = new DatagramPacket(receiveData, receiveData.length);
       receiveSocket.receive(receivePacket);
@@ -78,39 +101,68 @@ public class sender{
       if(ack.getType() == 0){
         System.out.println("Got ack: " + ack.getSeqNum());
         packet p = packets.peek();
-        while(p.getSeqNum() != ack.getSeqNum()){
-          packets.removeFirst();
-          p = packets.peek();
+        while(p!= null && p.getSeqNum() != ack.getSeqNum()){
+          synchronized(packets){
+            packets.removeFirst();
+            p = packets.peek();
+          }
         }
 
         if(!packets.isEmpty()){
           //TODO start timer
+          task.cancel();
+          createTask();
+          timer.schedule(task, 100);
         } else {
           //TODO stop timer
+          task.cancel();
+          scheduled = false;
         }
       }
     }
+
   }
 
-  private void timerExpired(){
+  private void createTask(){
+    synchronized(task){
+      task = new TimerTask(){
+        public void run(){
+          try{
+            timerExpired();
+          }catch(Exception e){
+            System.err.println("An error occured - create task");
+            e.printStackTrace();
+            System.exit(1);
+          }
+        }
+      };
+    }
+  }
+
+  private void timerExpired() throws Exception{
     sendPackets(true);
     //TODO restart timer
+    task.cancel();
+    createTask();
+    timer.schedule(task, 100);
   }
 
-  private void sendPackets(boolean sendAll){
+  private void sendPackets(boolean sendAll) throws Exception{
     byte[] sendData = new byte[512];
-    if(sendALL){
-      for (packet p: packets){
-        sendData = p.getUDPdata();
+    synchronized(packets){
+      if(sendAll){
+        for (packet p: packets){
+          sendData = p.getUDPdata();
+          DatagramPacket sendPacket = new DatagramPacket(sendData, sendData.length,
+              host, emuPort);
+          sendSocket.send(sendPacket);
+        }
+      }else{
+        sendData = curPacket.getUDPdata();
         DatagramPacket sendPacket = new DatagramPacket(sendData, sendData.length,
             host, emuPort);
         sendSocket.send(sendPacket);
       }
-    }else{
-      sendData = curPacket.getUDPdata();
-      DatagramPacket sendPacket = new DatagramPacket(sendData, sendData.length,
-          host, emuPort);
-      sendSocket.send(sendPacket);
     }
   }
 
@@ -118,9 +170,15 @@ public class sender{
     
     Thread listener = new Thread(){
       public void run(){
-        listen();
+        try{
+          listen();
+        }catch(Exception e){
+          System.err.println("An error occured - listener thread");
+          e.printStackTrace();
+          System.exit(1);
+        }
       }
-    }
+    };
     listener.start();
 
     transmit();
@@ -131,6 +189,12 @@ public class sender{
         host, emuPort);
     sendSocket.send(sendPacket);
 
+    while(!packets.isEmpty()){
+      Thread.sleep(500);
+    }
+
+    task.cancel();
+    scheduled = false;
     br.close();
     sendSocket.close();
     receiveSocket.close();
@@ -142,6 +206,7 @@ public class sender{
       s.start();
     }catch(Exception e){
       System.err.println("An error occured");
+      e.printStackTrace();
       System.exit(1);
     }
   }

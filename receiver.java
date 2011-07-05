@@ -23,6 +23,7 @@ public class receiver{
       System.exit(1);
     } catch(Exception e){
       //help text
+      e.printStackTrace();
       System.exit(1);
     }
 
