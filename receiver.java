@@ -38,27 +38,37 @@ public class receiver{
       DatagramPacket receivePacket = new DatagramPacket(receiveData, receiveData.length);
       receiveSocket.receive(receivePacket);
       packet p = packet.parseUDPdata(receivePacket.getData());
-      if(p.getType() == 2)
+      if(p.getType() == 2){
         done = true;
+        packet ack = packet.createEOT(lastGot);
+        sendData = ack.getUDPdata();
+        DatagramPacket sendPacket = new DatagramPacket(sendData, sendData.length,
+            host, ackPort);
+        sendSocket.send(sendPacket);
+      } else {
+        //we discard packet if not expected
+        if(p.getSeqNum() == expected){
+          lastGot = expected;
+          expected++;
+          expected%=32;
 
-      if(p.getSeqNum() == expected){
-        lastGot = expected;
-        expected++;
-        expected%=32;
+          System.out.println(p.getSeqNum());
+          pw.print(new String(p.getData()));
+        }
 
-        System.out.println(p.getSeqNum());
-        pw.print(new String(p.getData()));
+        //send ACK for last received packet
+        packet ack = packet.createACK(lastGot);
+        sendData = ack.getUDPdata();
+        DatagramPacket sendPacket = new DatagramPacket(sendData, sendData.length,
+            host, ackPort);
+        sendSocket.send(sendPacket);
       }
-
-      packet ack = packet.createACK(lastGot);
-      sendData = ack.getUDPdata();
-      DatagramPacket sendPacket = new DatagramPacket(sendData, sendData.length,
-          host, ackPort);
-      sendSocket.send(sendPacket);
 
     }
 
     pw.close();
+    receiveSocket.close();
+    sendSocket.close();
   }
 
   public static void main(String[] args){
