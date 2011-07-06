@@ -1,10 +1,15 @@
 import java.io.*;
 import java.net.*;
 
+/**
+ * Receiver application
+ * Implements an unbuffered receiver
+ * Writes received data to a file
+ */
 public class receiver{
   InetAddress host;
   int emuPort, ackPort;
-  PrintWriter pw;
+  PrintWriter pw, log;
   DatagramSocket receiveSocket;
   DatagramSocket sendSocket;
   int expected;
@@ -15,6 +20,7 @@ public class receiver{
       emuPort = Integer.parseInt(ep);
       ackPort = Integer.parseInt(ap);
       pw = new PrintWriter(f);
+      log = new PrintWriter("arrival.log");
       receiveSocket = new DatagramSocket(emuPort);
       sendSocket = new DatagramSocket();
       expected = 0;
@@ -22,17 +28,18 @@ public class receiver{
       System.err.println("Don't know about host: " + h);
       System.exit(1);
     } catch(Exception e){
-      //help text
       e.printStackTrace();
       System.exit(1);
     }
 
   }
 
+  // called from main to start receiver process
   public void start() throws Exception{
     boolean done = false;
     byte[] receiveData = new byte[512];
     byte[] sendData = new byte[512];
+    // lastGot used as seqnum when sending acks
     int lastGot = -1;
 
     while(!done){
@@ -40,10 +47,11 @@ public class receiver{
       receiveSocket.receive(receivePacket);
       packet p = packet.parseUDPdata(receivePacket.getData());
     
+      log.println(p.getSeqNum());
+
       //we discard packet if not expected
-      System.out.println("expected:" + expected);
       if(p.getSeqNum() == expected){
-        System.out.println(p.getSeqNum());
+        // if we receive EOT then we are done
         if(p.getType() == 2){
           done = true;
           packet ack = packet.createEOT(p.getSeqNum());
@@ -52,6 +60,8 @@ public class receiver{
               host, ackPort);
           sendSocket.send(sendPacket);
         } else {
+          // otherwise we have a data packet
+          // in this case, write the data to file and expect the next packet
           lastGot = expected;
           expected++;
           expected%=32;
@@ -72,9 +82,9 @@ public class receiver{
     }
 
     pw.close();
+    log.close();
     receiveSocket.close();
     sendSocket.close();
-    System.out.println("done");
   }
 
   public static void main(String[] args){

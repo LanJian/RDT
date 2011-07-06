@@ -1,0 +1,53 @@
+-- Reliable Data Transfer Application --
+          by Jack Huang
+
+To compile, type 'make'
+
+Usage:
+  There are three parts: nEmulator, Sender, and Receiver
+
+  nEmulator:
+      ./nEmulator-linux386 -h | <arguments>
+    <arguments>:
+      <emulator's-receiving-UDP-numbers-in-forward(sender)-direction>
+      <receiver-network-address>
+      <receiver-UDP-port>
+      <emulator's-receiving-UDP-numbers-in-backward(receiver)-direction>
+      <sender-network-address>
+      <sender-UDP-port>
+      <max-delay-of-link(milliseconds)>
+      <packet-discard-probability>
+      <verbose-mode>
+
+  Sender:
+      java sender <arguments>
+    <arguments>:
+      <host address of the network emulator>
+      <UDP port number used by the emulator to receive data from the sender>
+      <UDP port number used by the sender to receive ACKs from the emulator>
+      <name of the file to be transferred>
+
+  Receiver:
+      java receiver <arguments>
+    <arguments>:
+      <hostname for the network emulator>
+      <UDP port number used by the link emulator to receive ACKs from the receiver>
+      <UDP port number used by the receiver to receive data from the emulator>
+      <name of the file into which the received data is written>
+
+Example:
+  1. On host1: nEmulator 4441 host2 4444 4443 host3 4442 800 0.3 1
+  2. On host2: java receiver host1 4443 4444 out.txt
+  3. On host3: java sender host1 4441 4442 alice.txt
+
+Scripts are provided to run the application on the same machine:
+  1. ./emu.sh
+  2. ./receiver.sh
+  3. ./sender.sh
+
+Notes:
+  . The output from receiver, as well as the log files will be generated in the same
+    directory as where the application is run
+  . The timeout is set to 300ms
+
+Compiled and tested on linux006 with GNU Make 3.81 and Java version 1.6.0_20 

@@ -2,10 +2,17 @@ import java.io.*;
 import java.net.*;
 import java.util.*;
 
+/**
+ * Sender application
+ * The sender implements Go-Back-N behaviour.
+ * It provides reliable data transfer of a file to the receiver via the provided
+ * network emulator
+ */
 public class sender{
   InetAddress host;
   int emuPort, ackPort;
   BufferedReader br;
+  PrintWriter seqOut, ackOut;
   DatagramSocket sendSocket;
   DatagramSocket receiveSocket;
   Timer timer;
@@ -24,10 +31,13 @@ public class sender{
       emuPort = Integer.parseInt(ep);
       ackPort = Integer.parseInt(ap);
       br = new BufferedReader(new FileReader(f));
+      seqOut = new PrintWriter("seqNum.log");
+      ackOut = new PrintWriter("ack.log");
       sendSocket = new DatagramSocket();
       receiveSocket = new DatagramSocket(ackPort);
 
       windowSize = 10;
+      // packets buffer to keep track of sent but unacked packets
       packets = new LinkedList<packet>();
       curPacket = null;
       i = 0;
@@ -50,20 +60,23 @@ public class sender{
       System.err.println("Don't know about host: " + h);
       System.exit(1);
     } catch(Exception e){
-      //help text
       e.printStackTrace();
       System.exit(1);
     }
 
   }
   
+  /**
+   * Sends packets of size 500 chars until EOF is reached
+   */
   private void transmit() throws Exception{
 
     while(!done){
-      // transmit
+      // read 500 chars
       char[] buf = new char[500];
       int read = br.read(buf, 0, 500);
       if(read < 500){
+        // copy buffer to smaller sized buffer to avoid sending unnessessary data
         done = true;
         char[] tmp = new char[read];
         System.arraycopy(buf, 0, tmp, 0, read);
@@ -72,6 +85,7 @@ public class sender{
       packet p = packet.createPacket(i, new String(buf));
       curPacket = p;
 
+      // if window is full, wait a while and try sending again
       boolean sent = false;
       while(!sent) {
         if (packets.size() < windowSize){
@@ -82,35 +96,44 @@ public class sender{
         }
       }
 
+      // add the packet just sent to packets buffer
       synchronized(packets){
         packets.add(p);
       }
-      //TODO start timer if not already started
+      // start timer if not already started
       if(!scheduled){
-        createTask();
-        timer.schedule(task, 100);
+        scheduleTask();
       }
       i++;
       i%=32;
     }
   }
 
+  /**
+   * Listens for incoming packets until all packets and EOT have been sent
+   */
   private void listen() throws Exception{
     byte[] receiveData = new byte[512];
 
+    // loop until all packets are sent
     while(!done || !packets.isEmpty()){
       // get ack
       DatagramPacket receivePacket = new DatagramPacket(receiveData, receiveData.length);
       receiveSocket.receive(receivePacket);
       packet ack = packet.parseUDPdata(receivePacket.getData());
+      // discard if it's not an ack
       if(ack.getType() == 0){
-        System.out.println("Got ack: " + ack.getSeqNum());
+        // output to ack.log
+        ackOut.println(ack.getSeqNum());
         synchronized(packets){
           packet ackedP = null;
+          // find the packet the ack matches to
           for(packet p: packets){
             if(ack.getSeqNum() == p.getSeqNum())
               ackedP = p;
           }
+          // ack is cumulative
+          // all packets before the matched packet have been received, so remove them
           if(ackedP != null){
             packet p = packets.removeFirst();
             while(p != ackedP)
@@ -118,25 +141,22 @@ public class sender{
           }
         }
 
+        // if there is still outstanding unacked packets, restart timer
+        // otherwise stop timer
         if(!packets.isEmpty()){
-          //TODO start timer
-          task.cancel();
-          createTask();
-          timer.schedule(task, 100);
+          scheduleTask();
         } else {
-          //TODO stop timer
-          task.cancel();
-          scheduled = false;
+          cancelTask();
         }
       }
     }
 
-    System.out.println("listener done");
-
   }
 
-  private void createTask(){
+  // restarts the timer
+  private void scheduleTask(){
     synchronized(task){
+      task.cancel();
       task = new TimerTask(){
         public void run(){
           try{
@@ -148,38 +168,58 @@ public class sender{
           }
         }
       };
+      timer.schedule(task, 300);
+      scheduled = true;
     }
   }
 
-  private void timerExpired() throws Exception{
-    sendPackets(true);
-    //TODO restart timer
-    task.cancel();
-    createTask();
-    timer.schedule(task, 100);
+  // stops the timer
+  private void cancelTask(){
+    synchronized(task){
+      task.cancel();
+      scheduled = false;
+    }
   }
 
+  // if timer expire, send all outstanding unacked packets
+  // then restart timer
+  private void timerExpired() throws Exception{
+    sendPackets(true);
+    scheduleTask();
+  }
+
+  /**
+   * Sends a single packet or sends all unacked packets
+   */
   private void sendPackets(boolean sendAll) throws Exception{
     byte[] sendData = new byte[512];
     synchronized(packets){
+      // if sendAll flag is set, send all unacked packets in the buffer
       if(sendAll){
         for (packet p: packets){
           sendData = p.getUDPdata();
           DatagramPacket sendPacket = new DatagramPacket(sendData, sendData.length,
               host, emuPort);
           sendSocket.send(sendPacket);
+          seqOut.println(p.getSeqNum());
         }
       }else{
+        // otherwise send the current packet
         sendData = curPacket.getUDPdata();
         DatagramPacket sendPacket = new DatagramPacket(sendData, sendData.length,
             host, emuPort);
         sendSocket.send(sendPacket);
+        seqOut.println(curPacket.getSeqNum());
       }
     }
   }
 
+  /**
+   * Called from main to start the sender process
+   */
   public void start() throws Exception{
     
+    // create another thread to handle incoming acks
     Thread listener = new Thread(){
       public void run(){
         try{
@@ -193,27 +233,31 @@ public class sender{
     };
     listener.start();
 
+    // use the current thread to send data
     transmit();
 
-
+    // transmit() finished, meaning the file has been read and all packets have been sent
+    // now wait until all packets are acked
     while(!packets.isEmpty()){
-      System.out.println(packets);
       Thread.sleep(500);
     }
 
+    // all packets are sent, and acks received
+    // now cancel the timer
     timer.cancel();
     scheduled = false;
 
     // send EOT
-    byte[] sendData = packet.createEOT(10).getUDPdata();
+    byte[] sendData = packet.createEOT(i).getUDPdata();
     DatagramPacket sendPacket = new DatagramPacket(sendData, sendData.length,
         host, emuPort);
     sendSocket.send(sendPacket);
 
     br.close();
+    seqOut.close();
+    ackOut.close();
     sendSocket.close();
     receiveSocket.close();
-    System.out.println("done:");
   }
 
   public static void main(String[] args){
